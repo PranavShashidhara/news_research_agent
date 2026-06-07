@@ -1,0 +1,27 @@
+image:
+  registry: ghcr.io/your-org/news-research-agent
+  tag: latest
+  pullPolicy: IfNotPresent
+
+anthropic:
+  model: claude-sonnet-4-6
+  # API key is supplied via the 'anthropic-secret' Secret (see README).
+
+linkerd:
+  enabled: true          # injects the mesh sidecar + mTLS
+
+canary:
+  enabled: true          # Flagger progressive delivery for the agent service
+
+services:
+  orchestrator: { port: 8000, replicas: 2 }
+  retrieval:    { port: 8000, replicas: 1 }
+  agent:        { port: 8000, replicas: 2 }
+  evaluation:   { port: 8000, replicas: 1 }
+
+hpa:
+  agent:
+    minReplicas: 2
+    maxReplicas: 10
+    # Scale on a custom metric: in-flight LLM requests per pod.
+    targetInFlight: "5"

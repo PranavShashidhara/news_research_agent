@@ -1,0 +1,6 @@
+apiVersion: v2
+name: news-research-agent
+description: Multi-agent RAG news research assistant
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,3 @@
+{"id": "q1", "question": "What did the Federal Reserve announce regarding interest rates in its most recent decision covered by the ingested sources?", "ground_truth": null, "relevant_source_ids": null}
+{"id": "q2", "question": "Summarize the main developments in the latest technology earnings reports.", "ground_truth": null, "relevant_source_ids": null}
+{"id": "q3", "question": "What is the airspeed velocity of an unladen swallow according to recent news?", "ground_truth": "abstain", "relevant_source_ids": []}

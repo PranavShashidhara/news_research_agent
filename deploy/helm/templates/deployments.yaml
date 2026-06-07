@@ -1,0 +1,72 @@
+{{- range $name, $cfg := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels: { app: {{ $name }} }
+spec:
+  replicas: {{ $cfg.replicas }}
+  selector:
+    matchLabels: { app: {{ $name }} }
+  template:
+    metadata:
+      labels: { app: {{ $name }} }
+      annotations:
+        {{- if $.Values.linkerd.enabled }}
+        linkerd.io/inject: enabled
+        {{- end }}
+        {{- if eq $name "orchestrator" }}
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8000"
+        {{- end }}
+    spec:
+      containers:
+        - name: {{ $name }}
+          image: "{{ $.Values.image.registry }}{{ $.Values.image.separator | default "/" }}{{ $name }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ $cfg.port }}
+          env:
+            {{- if eq $name "orchestrator" }}
+            - { name: RETRIEVAL_URL, value: "http://retrieval:8000" }
+            - { name: AGENT_URL, value: "http://agent:8000" }
+            - { name: EVAL_URL, value: "http://evaluation:8000" }
+            - { name: OTLP_ENDPOINT, value: "http://otel-collector:4318/v1/traces" }
+            - { name: ANTHROPIC_MODEL, value: "{{ $.Values.anthropic.model }}" }
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef: { name: anthropic-secret, key: api-key }
+            {{- end }}
+            {{- if eq $name "agent" }}
+            - { name: ANTHROPIC_MODEL, value: "{{ $.Values.anthropic.model }}" }
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef: { name: anthropic-secret, key: api-key }
+            {{- end }}
+            {{- if eq $name "retrieval" }}
+            - { name: QDRANT_URL, value: "http://qdrant:6333" }
+            {{- end }}
+            {{- if eq $name "evaluation" }}
+            - { name: AGENT_URL, value: "http://agent:8000" }
+            {{- end }}
+          readinessProbe:
+            httpGet: { path: /health, port: {{ $cfg.port }} }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: {{ $cfg.port }} }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+spec:
+  selector: { app: {{ $name }} }
+  ports:
+    - port: {{ $cfg.port }}
+      targetPort: {{ $cfg.port }}
+{{- end }}

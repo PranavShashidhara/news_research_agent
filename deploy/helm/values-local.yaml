@@ -1,0 +1,17 @@
+image:
+  registry: news_research_agent
+  separator: "-"
+  tag: latest
+  pullPolicy: Never
+
+linkerd:
+  enabled: false
+
+canary:
+  enabled: false
+
+services:
+  orchestrator: { port: 8000, replicas: 1 }
+  retrieval:    { port: 8000, replicas: 1 }
+  agent:        { port: 8000, replicas: 1 }
+  evaluation:   { port: 8000, replicas: 1 }

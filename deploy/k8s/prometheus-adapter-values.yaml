@@ -1,0 +1,16 @@
+# Helm values for prometheus-community/prometheus-adapter so the HPA can read
+# `inflight_requests` as a per-pod custom metric.
+#   helm install prometheus-adapter prometheus-community/prometheus-adapter \
+#     -f deploy/k8s/prometheus-adapter-values.yaml
+rules:
+  default: false
+  custom:
+    - seriesQuery: 'inflight_requests{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: { resource: namespace }
+          pod: { resource: pod }
+      name:
+        matches: "inflight_requests"
+        as: "inflight_requests"
+      metricsQuery: 'avg(inflight_requests) by (<<.GroupBy>>)'

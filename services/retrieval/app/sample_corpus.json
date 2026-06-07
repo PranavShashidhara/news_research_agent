@@ -1,0 +1,60 @@
+{
+  "articles": [
+    {
+      "title": "Global AI safety summit concludes with new oversight framework",
+      "url": "https://example-news.org/ai-safety-summit",
+      "domain": "example-news.org",
+      "seendate": "20260601T120000Z",
+      "socialimage": "Representatives from 28 nations agreed on a voluntary framework for frontier AI model evaluation, including pre-deployment testing and incident reporting. The agreement stops short of binding regulation but establishes a shared registry of high-capability systems."
+    },
+    {
+      "title": "Major chipmaker reports record quarterly earnings on AI demand",
+      "url": "https://example-tech.com/chip-earnings-q2",
+      "domain": "example-tech.com",
+      "seendate": "20260603T090000Z",
+      "socialimage": "The company posted revenue well above analyst expectations, driven by data-center GPU sales. Executives cited sustained demand from cloud providers building out large-model training clusters, and raised full-year guidance."
+    },
+    {
+      "title": "Central bank holds interest rates steady amid cooling inflation",
+      "url": "https://example-finance.com/rates-hold",
+      "domain": "example-finance.com",
+      "seendate": "20260602T143000Z",
+      "socialimage": "Policymakers kept the benchmark rate unchanged for a third consecutive meeting, noting that inflation has moved closer to the target range. The bank signaled it expects to begin gradual cuts later in the year if current trends continue."
+    },
+    {
+      "title": "Renewable energy capacity overtakes coal in national grid milestone",
+      "url": "https://example-energy.org/renewables-milestone",
+      "domain": "example-energy.org",
+      "seendate": "20260531T080000Z",
+      "socialimage": "Solar and wind generation accounted for a larger share of electricity than coal for the first full quarter on record, according to grid operator data. Storage deployment and transmission upgrades were credited as key enablers."
+    },
+    {
+      "title": "Health regulators approve first at-home diagnostic for early screening",
+      "url": "https://example-health.com/at-home-diagnostic",
+      "domain": "example-health.com",
+      "seendate": "20260604T110000Z",
+      "socialimage": "The approved test allows individuals to collect samples at home and receive lab-analyzed results, which officials said could expand access in underserved regions. Clinicians urged that positive results still require follow-up confirmation."
+    },
+    {
+      "title": "Tech firms pledge interoperability standards for AI agents",
+      "url": "https://example-tech.com/agent-standards",
+      "domain": "example-tech.com",
+      "seendate": "20260605T160000Z",
+      "socialimage": "A consortium of technology companies announced a shared protocol intended to let AI agents from different vendors exchange tasks and data. Backers compared the effort to early web standards and said reference implementations would be open-sourced."
+    },
+    {
+      "title": "Coalition launches initiative to expand semiconductor manufacturing",
+      "url": "https://example-policy.org/semiconductor-initiative",
+      "domain": "example-policy.org",
+      "seendate": "20260530T130000Z",
+      "socialimage": "The multi-year initiative pairs public funding with private investment to build new fabrication plants and train a domestic workforce. Analysts said the plan could ease supply concentration but would take years to affect output."
+    },
+    {
+      "title": "Researchers report progress on long-duration grid battery storage",
+      "url": "https://example-energy.org/long-duration-storage",
+      "domain": "example-energy.org",
+      "seendate": "20260601T173000Z",
+      "socialimage": "A pilot deployment demonstrated multi-day energy storage using an iron-based chemistry that is cheaper than lithium-ion for grid-scale use. The team said cost and longevity, not peak performance, were the main design goals."
+    }
+  ]
+}

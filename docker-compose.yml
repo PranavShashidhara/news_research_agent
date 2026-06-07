@@ -1,0 +1,110 @@
+# Local development stack. Build context is the repo root so each service's
+# Dockerfile can COPY shared/ alongside its own app/.
+#
+#   ANTHROPIC_API_KEY=sk-... docker compose up --build
+#
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.0
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  retrieval:
+    build:
+      context: .
+      dockerfile: services/retrieval/Dockerfile
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+    depends_on:
+      - qdrant
+    ports:
+      - "8001:8000"
+    # torch + the embedding model need headroom; without this the container can
+    # be OOM-killed mid-request (connection reset). Tune down if your host is
+    # constrained, but ~2g is a safe floor.
+    mem_limit: 2g
+    mem_reservation: 1g
+
+
+  retrieval-mcp:
+    build:
+      context: .
+      dockerfile: services/retrieval/Dockerfile
+    command: ["python", "-m", "app.mcp_server"]
+    environment:
+      - RETRIEVAL_URL=http://retrieval:8000
+      - MCP_HTTP=1
+    depends_on:
+      - retrieval
+    ports:
+      - "8010:8000"
+
+  agent:
+    build:
+      context: .
+      dockerfile: services/agent/Dockerfile
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+    ports:
+      - "8002:8000"
+
+  evaluation:
+    build:
+      context: .
+      dockerfile: services/evaluation/Dockerfile
+    environment:
+      - AGENT_URL=http://agent:8000
+    depends_on:
+      - agent
+    ports:
+      - "8003:8000"
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
+    environment:
+      - RETRIEVAL_URL=http://retrieval:8000
+      - AGENT_URL=http://agent:8000
+      - EVAL_URL=http://evaluation:8000
+      - OTLP_ENDPOINT=http://otel-collector:4318/v1/traces
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+    depends_on:
+      - retrieval
+      - agent
+      - evaluation
+    ports:
+      - "8000:8000"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.110.0
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./deploy/monitoring/otel-collector.yaml:/etc/otel-collector.yaml
+    ports:
+      - "4318:4318"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - ./deploy/monitoring/grafana-dashboards:/etc/grafana/provisioning/dashboards
+      - ./deploy/monitoring/grafana-datasources:/etc/grafana/provisioning/datasources
+    ports:
+      - "3000:3000"
+
+volumes:
+  qdrant_data:

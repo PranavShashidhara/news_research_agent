@@ -1,0 +1,49 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- Virtual environments ----
+venv/
+.venv/
+env/
+ENV/
+
+# ---- Secrets / env ----
+.env
+.env.*
+!.env.example
+
+# ---- Embedding model / HF cache (large, regenerated on build) ----
+.hf/
+*/.hf/
+.cache/
+models/
+
+# ---- Docker / local data ----
+qdrant_storage/
+qdrant_data/
+
+# ---- Kubernetes / Helm ----
+*.tgz
+deploy/helm/charts/
+
+# ---- Load test artifacts ----
+loadtest/hpa_scaling_*.log
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

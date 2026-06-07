@@ -1,0 +1,25 @@
+{{- if .Values.canary.enabled }}
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: agent
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent
+  service:
+    port: 8000
+  analysis:
+    interval: 30s
+    threshold: 5
+    maxWeight: 50
+    stepWeight: 10
+    metrics:
+      - name: request-success-rate
+        thresholdRange: { min: 99 }
+        interval: 1m
+      - name: request-duration
+        thresholdRange: { max: 5000 }
+        interval: 1m
+{{- end }}
