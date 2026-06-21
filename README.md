@@ -62,12 +62,49 @@ make eval
 
 ---
 
-## Services
+## Makefile targets
 
-| Service | Port | Responsibility |
+| Target | Description |
+|---|---|
+| `make up` | Build images and start the full local stack (`docker compose up --build -d`) |
+| `make down` | Stop all containers and remove volumes |
+| `make ps` | Show container status |
+| `make logs [S=service]` | Tail logs for all services; optionally filter to one service |
+| `make ingest [Q="..."]` | Pull a news corpus into Qdrant (default topic: `artificial intelligence`) |
+| `make research Q="..."` | Ask a research question against the running stack |
+| `make eval` | Run the offline eval gate (`eval/run_eval.py`) |
+| `make helm-lint` | Lint the Helm chart |
+| `make helm-template` | Render the Helm templates to stdout |
+
+---
+
+## Docker Compose containers (local stack)
+
+`make up` starts **9 containers**:
+
+| Container | Host port | Image / build | Notes |
+|---|---|---|---|
+| `qdrant` | 6333 | `qdrant/qdrant:v1.12.0` | Vector store; data persisted in `qdrant_data` volume |
+| `retrieval` | 8001 | `services/retrieval/Dockerfile` | GDELT ingestion + Qdrant search; `mem_limit: 2g` for the embedding model |
+| `retrieval-mcp` | 8010 | `services/retrieval/Dockerfile` | MCP server exposing `search_news`/`fetch_article` over HTTP (`MCP_HTTP=1`) |
+| `agent` | 8002 | `services/agent/Dockerfile` | Anthropic tool-calling: synthesize / extract claims / fact-check |
+| `evaluation` | 8003 | `services/evaluation/Dockerfile` | RAG + news metrics, CI gate logic |
+| `orchestrator` | 8000 | `services/orchestrator/Dockerfile` | Multi-agent loop, context mgmt, hallucination subsystem |
+| `otel-collector` | 4318 | `otel/opentelemetry-collector-contrib:0.110.0` | Receives OTLP traces from orchestrator |
+| `prometheus` | 9090 | `prom/prometheus:v2.54.1` | Scrapes metrics from all services |
+| `grafana` | 3000 | `grafana/grafana:11.2.0` | Pre-provisioned RAG dashboard + Prometheus datasource |
+
+All services share a Docker Compose network; inter-service calls use container names (e.g. `http://retrieval:8000`).
+
+---
+
+## Application services (API surface)
+
+| Service | Host port | Responsibility |
 |---|---|---|
 | `orchestrator` | 8000 | Multi-agent loop, context mgmt, hallucination subsystem, metrics |
 | `retrieval` | 8001 | GDELT ingestion + Qdrant recency/source-filtered search |
+| `retrieval-mcp` | 8010 | MCP server — `search_news` + `fetch_article` tools |
 | `agent` | 8002 | Anthropic tool-calling: synthesize / extract claims / fact-check |
 | `evaluation` | 8003 | RAG + news metrics, CI gate logic |
 
@@ -88,11 +125,25 @@ helm upgrade --install news-research-agent deploy/helm \
   --set image.tag=latest
 ```
 
+### Pod count
+
+| Workload | Static replicas | HPA min | HPA max | Scale metric |
+|---|---|---|---|---|
+| `orchestrator` | 2 | — | — | — |
+| `retrieval` | 1 | — | — | — |
+| `agent` | 2 | 2 | **10** | `inflight_requests` (avg ≤ 5 per pod) |
+| `evaluation` | 1 | — | — | — |
+| `qdrant` | 1 | — | — | — |
+| **Total (at rest)** | **7** | | | |
+| **Total (peak)** | | | **15** | (agent HPA max + other 5) |
+
+The `agent` HPA (`autoscaling/v2`) triggers on the custom metric `inflight_requests` exposed by the orchestrator and surfaced via prometheus-adapter. At rest the cluster runs **7 pods**; under load it can scale to **15 pods**.
+
 What you get:
 - **Linkerd** sidecar injection + automatic mTLS between services.
 - **HPA** on `agent` keyed to in-flight LLM requests per pod (not CPU).
 - **Flagger Canary** on `agent`: 10%→50% traffic shift, auto-promoted only if
-  success-rate and latency stay within thresholds, else auto-rollback.
+  success-rate ≥ 99% and latency ≤ 5000 ms, checked every 30 s; else auto-rollback.
 
 ---
 
@@ -144,17 +195,4 @@ Key env vars (see `deploy/helm/values.yaml` and `docker-compose.yml`):
 - `GATE_FAITHFULNESS` / `GATE_CITATION_PRECISION` / `GATE_CONTEXT_RECALL`
 - `RECENCY_DAYS` per request — restrict retrieval to recent articles
 
----
 
-## Suggested 1–2 week build order
-
-1. Days 1–2: orchestrator + agent tool-calling + retrieval end-to-end.
-2. Day 3: multi-agent split + structured output.
-3. Day 4: context mgmt + hallucination subsystem.
-4. Day 5: Dockerize, compose run.
-5. Days 6–7: K8s + Helm + Linkerd mesh.
-6. Day 8: observability (OTel traces, Prometheus, Grafana).
-7. Day 9: custom-metric HPA + Flagger canary.
-8. Day 10: eval-gated CI/CD.
-
-This repo gives you a running spine for steps 1–10 to extend.
