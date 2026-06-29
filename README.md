@@ -93,11 +93,20 @@ make research Q="What are the latest developments in AI regulation?"
 make eval
 ```
 
-Open the local dashboards:
+Open the local dashboards and service endpoints:
 
-- Grafana: http://localhost:3000 (RAG News Agent dashboard)
-- Orchestrator API docs: http://localhost:8000/docs
-- Prometheus: http://localhost:9090
+| Service | URL | Notes |
+|---|---|---|
+| Grafana | http://localhost:3000 | RAG News Agent dashboard (default login: admin/admin) |
+| Orchestrator API | http://localhost:8000/docs | Interactive Swagger UI |
+| Orchestrator (raw) | http://localhost:8000 | POST `/research` to submit queries |
+| Retrieval service | http://localhost:8001/docs | GDELT ingestion + Qdrant search |
+| Retrieval MCP | http://localhost:8010 | MCP server (`search_news` / `fetch_article` tools) |
+| Agent service | http://localhost:8002/docs | Synthesize / extract claims / fact-check |
+| Evaluation service | http://localhost:8003/docs | RAG metrics + CI gate |
+| Qdrant UI | http://localhost:6333/dashboard | Vector store browser |
+| Prometheus | http://localhost:9090 | Metrics explorer |
+| OTEL Collector | http://localhost:4318 | OTLP trace receiver (HTTP) |
 
 ---
 
@@ -178,10 +187,35 @@ kubectl get hpa
 
 ### Phase 6 — Validate & Load Test
 
-```bash
-# Port-forward the orchestrator to test locally
-kubectl port-forward svc/orchestrator 8000:8000
+Port-forward all services to access them locally from the cluster:
 
+```bash
+# Run each in a separate terminal (or background with &)
+kubectl port-forward svc/orchestrator  8000:8000
+kubectl port-forward svc/retrieval     8001:8000
+kubectl port-forward svc/agent         8002:8000
+kubectl port-forward svc/evaluation    8003:8000
+kubectl port-forward svc/retrieval-mcp 8010:8010
+kubectl port-forward svc/qdrant        6333:6333
+kubectl port-forward svc/prometheus    9090:9090
+kubectl port-forward svc/grafana       3000:3000
+```
+
+Once forwarded, the same URLs as the local stack apply:
+
+| Service | URL | Notes |
+|---|---|---|
+| Grafana | http://localhost:3000 | RAG News Agent dashboard |
+| Orchestrator API | http://localhost:8000/docs | Interactive Swagger UI |
+| Orchestrator (raw) | http://localhost:8000 | POST `/research` to submit queries |
+| Retrieval service | http://localhost:8001/docs | GDELT ingestion + Qdrant search |
+| Retrieval MCP | http://localhost:8010 | MCP server tools |
+| Agent service | http://localhost:8002/docs | Synthesize / fact-check |
+| Evaluation service | http://localhost:8003/docs | RAG metrics + CI gate |
+| Qdrant UI | http://localhost:6333/dashboard | Vector store browser |
+| Prometheus | http://localhost:9090 | Metrics explorer |
+
+```bash
 # Install Locust and run the load test
 pip install locust
 locust -f loadtest/locustfile.py --host http://localhost:8000 \
