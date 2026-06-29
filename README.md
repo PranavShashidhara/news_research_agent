@@ -38,26 +38,157 @@ Architecture details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 
-## Quick start (local, ~5 min)
+## End-to-End Setup (From Scratch)
+
+> **Golden rule:** validate the local Docker Compose stack — including `make eval` — before touching Kubernetes. Everything in the K8s phases depends on a clean local run.
+
+---
+
+### Phase 1 — Prerequisites
+
+Install the required toolchain:
 
 ```bash
-cp .env.example .env            # add your ANTHROPIC_API_KEY
-export ANTHROPIC_API_KEY=sk-ant-...
+# Docker Engine (Linux)
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER && newgrp docker
 
-make up                         # build + start all services + observability
-make ingest                     # pull a fresh news corpus from GDELT into Qdrant
-make research Q="What are the latest developments in AI regulation?"
+# kubectl
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+# Helm
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# kind (local Kubernetes cluster)
+curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
+chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
 ```
 
-Open:
-- Grafana dashboard: http://localhost:3000 (RAG News Agent)
-- Prometheus: http://localhost:9090
-- Orchestrator API docs: http://localhost:8000/docs
+---
 
-Run the offline eval gate locally:
+### Phase 2 — Local Docker Compose
+
+Validate everything works before building for Kubernetes.
 
 ```bash
+# Clone and configure
+git clone <your-repo-url> && cd news_research_agent
+cp .env.example .env
+# Edit .env → set ANTHROPIC_API_KEY=sk-ant-...
+
+# Start all 9 containers
+make up
+
+# Wait ~30s for health checks, then verify all containers are healthy
+make ps
+
+# Ingest a fresh news corpus from GDELT into Qdrant
+make ingest
+
+# Run a test query
+make research Q="What are the latest developments in AI regulation?"
+
+# Run the offline eval gate — must pass before proceeding
 make eval
+```
+
+Open the local dashboards:
+
+- Grafana: http://localhost:3000 (RAG News Agent dashboard)
+- Orchestrator API docs: http://localhost:8000/docs
+- Prometheus: http://localhost:9090
+
+---
+
+### Phase 3 — Build & Push Images
+
+```bash
+# Authenticate to your container registry (GitHub Container Registry shown)
+echo $CR_PAT | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+
+# Build and push each service image
+docker build -t ghcr.io/your-org/news-research-agent/orchestrator:latest services/orchestrator/
+docker build -t ghcr.io/your-org/news-research-agent/retrieval:latest    services/retrieval/
+docker build -t ghcr.io/your-org/news-research-agent/agent:latest        services/agent/
+docker build -t ghcr.io/your-org/news-research-agent/evaluation:latest   services/evaluation/
+
+docker push ghcr.io/your-org/news-research-agent/orchestrator:latest
+docker push ghcr.io/your-org/news-research-agent/retrieval:latest
+docker push ghcr.io/your-org/news-research-agent/agent:latest
+docker push ghcr.io/your-org/news-research-agent/evaluation:latest
+```
+
+---
+
+### Phase 4 — Kubernetes Cluster Setup
+
+```bash
+# Create a local kind cluster
+kind create cluster --name news-research
+
+# Verify the node is Ready
+kubectl get nodes
+
+# Install Linkerd (service mesh + mTLS)
+curl --proto '=https' --tlsv1.2 -sSfL https://run.linkerd.io/install | sh
+export PATH=$PATH:$HOME/.linkerd2/bin
+linkerd install --crds | kubectl apply -f -
+linkerd install | kubectl apply -f -
+linkerd check
+
+# Install Flagger (progressive canary delivery)
+helm repo add flagger https://flagger.app
+helm upgrade --install flagger flagger/flagger \
+  --namespace linkerd \
+  --set meshProvider=linkerd \
+  --set metricsServer=http://prometheus:9090
+
+# Install prometheus-adapter (exposes inflight_requests as a custom HPA metric)
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm upgrade --install prometheus-adapter prometheus-community/prometheus-adapter \
+  -f deploy/k8s/prometheus-adapter-values.yaml
+```
+
+---
+
+### Phase 5 — Deploy to Kubernetes
+
+```bash
+# Create the Anthropic API key secret
+kubectl create secret generic anthropic-secret \
+  --from-literal=api-key=$ANTHROPIC_API_KEY
+
+# Lint the Helm chart
+helm lint deploy/helm
+
+# Deploy
+helm upgrade --install news-research-agent deploy/helm \
+  --set image.registry=ghcr.io/your-org/news-research-agent \
+  --set image.tag=latest
+
+# Verify pods (7 at rest)
+kubectl get pods
+
+# Verify HPA is wired up
+kubectl get hpa
+```
+
+---
+
+### Phase 6 — Validate & Load Test
+
+```bash
+# Port-forward the orchestrator to test locally
+kubectl port-forward svc/orchestrator 8000:8000
+
+# Install Locust and run the load test
+pip install locust
+locust -f loadtest/locustfile.py --host http://localhost:8000 \
+       --users 25 --spawn-rate 5 --run-time 5m --headless
+
+# In a second terminal — watch agent pods scale from 2 → up to 10
+./loadtest/hpa_watch.sh
 ```
 
 ---
@@ -112,19 +243,6 @@ All services share a Docker Compose network; inter-service calls use container n
 
 ## Kubernetes deployment
 
-```bash
-# Prereqs: a cluster (kind/minikube/GKE/EKS), Linkerd + Flagger installed,
-# prometheus-adapter exposing `inflight_requests` as a custom metric.
-
-kubectl create secret generic anthropic-secret \
-  --from-literal=api-key=$ANTHROPIC_API_KEY
-
-helm lint deploy/helm
-helm upgrade --install news-research-agent deploy/helm \
-  --set image.registry=ghcr.io/your-org/news-research-agent \
-  --set image.tag=latest
-```
-
 ### Pod count
 
 | Workload | Static replicas | HPA min | HPA max | Scale metric |
@@ -142,8 +260,7 @@ The `agent` HPA (`autoscaling/v2`) triggers on the custom metric `inflight_reque
 What you get:
 - **Linkerd** sidecar injection + automatic mTLS between services.
 - **HPA** on `agent` keyed to in-flight LLM requests per pod (not CPU).
-- **Flagger Canary** on `agent`: 10%→50% traffic shift, auto-promoted only if
-  success-rate ≥ 99% and latency ≤ 5000 ms, checked every 30 s; else auto-rollback.
+- **Flagger Canary** on `agent`: 10%→50% traffic shift, auto-promoted only if success-rate ≥ 99% and latency ≤ 5000 ms, checked every 30 s; else auto-rollback.
 
 ---
 
@@ -156,6 +273,8 @@ verification, and abstains when sources can't answer. This is a model-directed
 agent, not a fixed pipeline. `search_news` / `fetch_article` are served by an
 **MCP server** (`retrieval-mcp`), so tools are decoupled from orchestration and
 any MCP client could reuse them. See `docs/ARCHITECTURE.md`.
+
+---
 
 ## Load testing the autoscaler
 
@@ -171,6 +290,8 @@ locust -f loadtest/locustfile.py --host http://localhost:8000 \
 metric via prometheus-adapter (`deploy/k8s/prometheus-adapter-values.yaml`); the
 `agent` HPA scales on it. Record the run to turn "configured autoscaling" into
 "load-tested and watched it scale."
+
+---
 
 ## The eval gate (the ML-specific CI step)
 
@@ -194,5 +315,3 @@ Key env vars (see `deploy/helm/values.yaml` and `docker-compose.yml`):
 - `MAX_CONTEXT_CHARS` — context budget for the orchestrator
 - `GATE_FAITHFULNESS` / `GATE_CITATION_PRECISION` / `GATE_CONTEXT_RECALL`
 - `RECENCY_DAYS` per request — restrict retrieval to recent articles
-
-
