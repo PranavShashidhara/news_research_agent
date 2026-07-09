@@ -15,8 +15,11 @@ from __future__ import annotations
 import os
 import sys
 
+import time
+
 import anthropic
 from fastapi import FastAPI
+from prometheus_client import Counter, Histogram, make_asgi_app
 from pydantic import BaseModel
 
 sys.path.append("/app")
@@ -36,6 +39,19 @@ MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 
 app = FastAPI(title="agent")
+app.mount("/metrics", make_asgi_app())
+
+# Prometheus metrics
+SYNTHESIS_LATENCY = Histogram(
+    "agent_synthesis_time_seconds", "Synthesis latency in seconds"
+)
+CLAIMS_EXTRACTION_LATENCY = Histogram(
+    "agent_extract_claims_time_seconds", "Claims extraction latency in seconds"
+)
+FACTCHECK_LATENCY = Histogram(
+    "agent_factcheck_time_seconds", "Fact-check latency in seconds"
+)
+CLAIMS_EXTRACTED = Counter("agent_claims_extracted_total", "Total claims extracted")
 
 # Rough per-million-token prices for cost accounting on the dashboard.
 PRICE_IN = float(os.getenv("PRICE_IN_PER_MTOK", "3.0"))
@@ -183,6 +199,7 @@ def health() -> dict:
 
 @app.post("/synthesize")
 def synthesize(req: SynthReq) -> dict:
+    start = time.time()
     user = (
         f"QUESTION: {req.question}\n\nSOURCES:\n{sources_block(req.articles)}"
     )
@@ -195,6 +212,7 @@ def synthesize(req: SynthReq) -> dict:
         abstained=data.get("abstained", False),
         notes=data.get("notes", ""),
     )
+    SYNTHESIS_LATENCY.observe(time.time() - start)
     return {
         "answer": answer.model_dump(mode="json"),
         "token_usage": {
@@ -207,6 +225,7 @@ def synthesize(req: SynthReq) -> dict:
 
 @app.post("/extract_claims")
 def extract_claims(req: ClaimsReq) -> dict:
+    start = time.time()
     joined = " ".join(
         f"{s.text} (cites: {','.join(s.source_ids)})"
         for s in req.answer.sentences
@@ -218,6 +237,8 @@ def extract_claims(req: ClaimsReq) -> dict:
         Claim(text=c["text"], cited_source_ids=c.get("cited_source_ids", []))
         for c in data["claims"]
     ]
+    CLAIMS_EXTRACTION_LATENCY.observe(time.time() - start)
+    CLAIMS_EXTRACTED.inc(len(claims))
     return {
         "claims": [c.model_dump() for c in claims],
         "token_usage": {
@@ -230,6 +251,7 @@ def extract_claims(req: ClaimsReq) -> dict:
 
 @app.post("/fact_check")
 def fact_check(req: FactCheckReq) -> dict:
+    start = time.time()
     claims_txt = "\n".join(f"- {c.text}" for c in req.claims)
     user = (
         f"CLAIMS:\n{claims_txt}\n\nSOURCES:\n{sources_block(req.articles)}"
@@ -249,6 +271,7 @@ def fact_check(req: FactCheckReq) -> dict:
                 rationale=v.get("rationale", ""),
             )
         )
+    FACTCHECK_LATENCY.observe(time.time() - start)
     return {
         "verdicts": [v.model_dump() for v in verified],
         "token_usage": {

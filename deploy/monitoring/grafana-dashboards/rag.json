@@ -1,10 +1,26 @@
 {
   "title": "RAG News Agent",
   "panels": [
-    {"type":"stat","title":"Hallucination flag rate","targets":[{"expr":"rate(hallucination_flags_total[5m]) / clamp_min(rate(research_requests_total[5m]),1)"}],"gridPos":{"h":6,"w":8,"x":0,"y":0}},
-    {"type":"stat","title":"Abstention rate","targets":[{"expr":"rate(abstentions_total[5m]) / clamp_min(rate(research_requests_total[5m]),1)"}],"gridPos":{"h":6,"w":8,"x":8,"y":0}},
-    {"type":"stat","title":"Cumulative LLM cost (USD)","targets":[{"expr":"llm_cost_usd_total"}],"gridPos":{"h":6,"w":8,"x":16,"y":0}},
-    {"type":"timeseries","title":"Stage latency p95","targets":[{"expr":"histogram_quantile(0.95, sum(rate(stage_latency_seconds_bucket[5m])) by (le, stage))"}],"gridPos":{"h":8,"w":24,"x":0,"y":6}}
+    {"type":"stat","title":"Hallucination flag rate","targets":[{"expr":"rate(hallucination_flags_total[5m]) / clamp_min(rate(research_requests_total[5m]),1)"}],"gridPos":{"h":6,"w":6,"x":0,"y":0}},
+    {"type":"stat","title":"Abstention rate","targets":[{"expr":"rate(abstentions_total[5m]) / clamp_min(rate(research_requests_total[5m]),1)"}],"gridPos":{"h":6,"w":6,"x":6,"y":0}},
+    {"type":"stat","title":"Cumulative LLM cost (USD)","targets":[{"expr":"llm_cost_usd_total"}],"gridPos":{"h":6,"w":6,"x":12,"y":0}},
+    {"type":"stat","title":"Gate pass rate","targets":[{"expr":"eval_gate_pass"}],"gridPos":{"h":6,"w":6,"x":18,"y":0}},
+    {"type":"timeseries","title":"Stage latency p95","targets":[{"expr":"histogram_quantile(0.95, sum(rate(stage_latency_seconds_bucket[5m])) by (le, stage))"}],"gridPos":{"h":8,"w":24,"x":0,"y":6}},
+    {"type":"stat","title":"Faithfulness score","targets":[{"expr":"eval_faithfulness_score"}],"gridPos":{"h":6,"w":6,"x":0,"y":14}},
+    {"type":"stat","title":"Citation precision","targets":[{"expr":"eval_citation_precision_score"}],"gridPos":{"h":6,"w":6,"x":6,"y":14}},
+    {"type":"stat","title":"Citation recall","targets":[{"expr":"eval_citation_recall_score"}],"gridPos":{"h":6,"w":6,"x":12,"y":14}},
+    {"type":"stat","title":"Context recall","targets":[{"expr":"eval_context_recall_score"}],"gridPos":{"h":6,"w":6,"x":18,"y":14}},
+    {"type":"timeseries","title":"Retrieval search latency (p95)","targets":[{"expr":"histogram_quantile(0.95, rate(retrieval_search_time_seconds_bucket[5m]))"}],"gridPos":{"h":8,"w":12,"x":0,"y":20}},
+    {"type":"timeseries","title":"Retrieval results count","targets":[{"expr":"histogram_quantile(0.5, rate(retrieval_results_count_bucket[5m]))"}],"gridPos":{"h":8,"w":12,"x":12,"y":20}},
+    {"type":"timeseries","title":"Agent synthesis latency (p95)","targets":[{"expr":"histogram_quantile(0.95, rate(agent_synthesis_time_seconds_bucket[5m]))"}],"gridPos":{"h":8,"w":8,"x":0,"y":28}},
+    {"type":"timeseries","title":"Claims extraction latency (p95)","targets":[{"expr":"histogram_quantile(0.95, rate(agent_extract_claims_time_seconds_bucket[5m]))"}],"gridPos":{"h":8,"w":8,"x":8,"y":28}},
+    {"type":"timeseries","title":"Fact-check latency (p95)","targets":[{"expr":"histogram_quantile(0.95, rate(agent_factcheck_time_seconds_bucket[5m]))"}],"gridPos":{"h":8,"w":8,"x":16,"y":28}},
+    {"type":"stat","title":"Source freshness","targets":[{"expr":"eval_source_freshness_score"}],"gridPos":{"h":6,"w":6,"x":0,"y":36}},
+    {"type":"stat","title":"Source diversity","targets":[{"expr":"eval_source_diversity_score"}],"gridPos":{"h":6,"w":6,"x":6,"y":36}},
+    {"type":"stat","title":"Hit rate","targets":[{"expr":"eval_hit_rate_score"}],"gridPos":{"h":6,"w":6,"x":12,"y":36}},
+    {"type":"stat","title":"MRR","targets":[{"expr":"eval_mrr_score"}],"gridPos":{"h":6,"w":6,"x":18,"y":36}},
+    {"type":"timeseries","title":"Requests per minute","targets":[{"expr":"rate(research_requests_total[1m])"}],"gridPos":{"h":8,"w":12,"x":0,"y":42}},
+    {"type":"timeseries","title":"In-flight requests","targets":[{"expr":"inflight_requests"}],"gridPos":{"h":8,"w":12,"x":12,"y":42}}
   ],
   "schemaVersion": 39,
   "version": 1

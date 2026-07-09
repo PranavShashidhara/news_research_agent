@@ -15,8 +15,7 @@ COPY services/retrieval/app/ /app/app/
 # Keeps startup fast, makes the image offline-capable and reproducible.
 ENV EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2
 ENV HF_HOME=/app/.hf
-RUN python -c "from sentence_transformers import SentenceTransformer; \
-SentenceTransformer('${EMBED_MODEL}')"
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=3s --retries=5 \

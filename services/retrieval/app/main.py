@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from prometheus_client import Counter, Histogram, make_asgi_app
 from qdrant_client import QdrantClient, models
 from sentence_transformers import SentenceTransformer
 
@@ -33,8 +34,17 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 
 app = FastAPI(title="retrieval")
+app.mount("/metrics", make_asgi_app())
+
 _embedder: SentenceTransformer | None = None
 _client: QdrantClient | None = None
+
+# Prometheus metrics
+SEARCH_LATENCY = Histogram("retrieval_search_time_seconds", "Search latency in seconds")
+RESULTS_COUNT = Histogram("retrieval_results_count", "Number of results returned per search")
+INGEST_DOCS = Counter("retrieval_ingest_documents_total", "Total documents ingested")
+INGEST_CHUNKS = Counter("retrieval_ingest_chunks_total", "Total chunks created from ingestion")
+INGEST_ERRORS = Counter("retrieval_ingest_errors_total", "Total ingestion errors")
 
 
 def embedder() -> SentenceTransformer:
@@ -185,6 +195,11 @@ def ingest(query: str = "breaking news", max_records: int = 75) -> dict:
             )
     if points:
         client().upsert(collection_name=COLLECTION, points=points)
+
+    # Record metrics
+    INGEST_DOCS.inc(len(articles))
+    INGEST_CHUNKS.inc(len(points))
+
     return {
         "ingested_articles": len(articles),
         "chunks": len(points),
@@ -223,6 +238,7 @@ def by_id(payload: dict) -> dict | None:
 
 @app.post("/search", response_model=RetrievalResponse)
 def search(req: RetrievalRequest) -> RetrievalResponse:
+    start = time.time()
     vec = embedder().encode(req.query).tolist()
 
     must: list[models.Condition] = []
@@ -260,4 +276,9 @@ def search(req: RetrievalRequest) -> RetrievalResponse:
         )
         for h in hits
     ]
+
+    # Record metrics
+    SEARCH_LATENCY.observe(time.time() - start)
+    RESULTS_COUNT.observe(len(articles))
+
     return RetrievalResponse(articles=articles, query=req.query)

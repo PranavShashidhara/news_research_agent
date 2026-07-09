@@ -14,10 +14,12 @@ from __future__ import annotations
 import math
 import os
 import sys
+import time
 from datetime import datetime, timezone
 
 import httpx
 from fastapi import FastAPI
+from prometheus_client import Gauge, Histogram, make_asgi_app
 
 sys.path.append("/app")
 from shared.schemas import (  # noqa: E402
@@ -38,6 +40,21 @@ GATE = {
 }
 
 app = FastAPI(title="evaluation")
+app.mount("/metrics", make_asgi_app())
+
+# Prometheus metrics
+EVAL_LATENCY = Histogram("eval_evaluate_time_seconds", "Evaluation latency in seconds")
+FAITHFULNESS = Gauge("eval_faithfulness_score", "Faithfulness score")
+CITATION_PRECISION = Gauge("eval_citation_precision_score", "Citation precision score")
+CITATION_RECALL = Gauge("eval_citation_recall_score", "Citation recall score")
+CONTEXT_PRECISION = Gauge("eval_context_precision_score", "Context precision score")
+CONTEXT_RECALL = Gauge("eval_context_recall_score", "Context recall score")
+HIT_RATE = Gauge("eval_hit_rate_score", "Hit rate score")
+MRR = Gauge("eval_mrr_score", "Mean reciprocal rank")
+NDCG = Gauge("eval_ndcg_score", "NDCG score")
+SOURCE_FRESHNESS = Gauge("eval_source_freshness_score", "Source freshness score")
+SOURCE_DIVERSITY = Gauge("eval_source_diversity_score", "Source diversity score")
+GATE_PASS = Gauge("eval_gate_pass", "Whether evaluation passed the gate (1.0 or 0.0)")
 
 
 # --------------------------------------------------------------------------- #
@@ -161,6 +178,7 @@ def health() -> dict:
 
 @app.post("/evaluate", response_model=EvalResponse)
 def evaluate(req: EvalRequest) -> EvalResponse:
+    start = time.time()
     scores = EvalScores()
 
     for k, v in faithfulness_and_citations(req).items():
@@ -185,6 +203,30 @@ def evaluate(req: EvalRequest) -> EvalResponse:
         val = getattr(scores, metric)
         if val is not None and val < threshold:
             failures.append(f"{metric}={val:.2f} < {threshold:.2f}")
+
+    # Record metrics
+    EVAL_LATENCY.observe(time.time() - start)
+    if scores.faithfulness is not None:
+        FAITHFULNESS.set(scores.faithfulness)
+    if scores.citation_precision is not None:
+        CITATION_PRECISION.set(scores.citation_precision)
+    if scores.citation_recall is not None:
+        CITATION_RECALL.set(scores.citation_recall)
+    if scores.context_precision is not None:
+        CONTEXT_PRECISION.set(scores.context_precision)
+    if scores.context_recall is not None:
+        CONTEXT_RECALL.set(scores.context_recall)
+    if scores.hit_rate is not None:
+        HIT_RATE.set(scores.hit_rate)
+    if scores.mrr is not None:
+        MRR.set(scores.mrr)
+    if scores.ndcg is not None:
+        NDCG.set(scores.ndcg)
+    if scores.source_freshness is not None:
+        SOURCE_FRESHNESS.set(scores.source_freshness)
+    if scores.source_diversity is not None:
+        SOURCE_DIVERSITY.set(scores.source_diversity)
+    GATE_PASS.set(1.0 if not failures else 0.0)
 
     return EvalResponse(
         scores=scores, passed_gate=not failures, gate_failures=failures

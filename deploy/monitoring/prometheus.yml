@@ -5,3 +5,18 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["orchestrator:8000"]
+
+  - job_name: retrieval
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["retrieval:8000"]
+
+  - job_name: agent
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["agent:8000"]
+
+  - job_name: evaluation
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["evaluation:8000"]
