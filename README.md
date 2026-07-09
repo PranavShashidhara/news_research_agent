@@ -327,17 +327,209 @@ metric via prometheus-adapter (`deploy/k8s/prometheus-adapter-values.yaml`); the
 
 ---
 
-## The eval gate (the ML-specific CI step)
+## Ingesting Data into Qdrant
 
-`eval/run_eval.py` runs the golden dataset through the live stack, scores each
-answer, and **fails the build** if the non-rotting metrics drop below
-threshold (`faithfulness ≥ 0.80`, `citation_precision ≥ 0.75`,
-`context_recall ≥ 0.70`). Prompt or model changes are thus treated like code
-changes that must pass quality bars. Factual correctness is deliberately *not*
-gated — it rots in a news domain, while groundedness does not.
+### Single Topic Ingest
 
-The full pipeline (`.github/workflows/ci-cd.yaml`): lint → test → build & push
-images → **eval gate** → Helm deploy with Flagger canary.
+The bundled sample corpus is for demo purposes only. To build a real dataset:
+
+```bash
+# Ingest from GDELT (requires internet; falls back to sample corpus if rate-limited)
+curl -X POST "http://localhost:8001/ingest?query=artificial%20intelligence&max_records=75"
+```
+
+### Multi-Topic Ingestion for Larger Datasets
+
+To build a diverse corpus for evaluation:
+
+```bash
+# Ingest different topics in parallel or sequentially
+for topic in "artificial intelligence" "climate policy" "cybersecurity" "startup funding" "energy markets"; do
+  echo "Ingesting: $topic"
+  curl -X POST "http://localhost:8001/ingest?query=$(echo $topic | tr ' ' '%20')&max_records=150"
+  sleep 2  # Rate-limit courtesy
+done
+```
+
+Or use the Makefile:
+
+```bash
+make ingest Q="artificial intelligence"
+make ingest Q="technology trends"
+make ingest Q="business news"
+```
+
+### Checking Ingestion Status
+
+- **Qdrant Dashboard**: http://localhost:6333/dashboard — browse collections and point count
+- **Retrieval logs**: `docker compose logs retrieval`
+
+Once articles are indexed, they're automatically chunked (800-char chunks with 150-char overlap), embedded using `sentence-transformers/all-MiniLM-L6-v2`, and upserted to the `news` collection.
+
+---
+
+## Evaluation: Generate & Run
+
+Evaluation is built on a **golden dataset** — questions paired with ground truth answers and relevant source IDs. This gates code/prompt/model changes in CI.
+
+### Step 1: Generate Evaluation Samples
+
+After ingesting articles, auto-generate evaluation samples:
+
+```bash
+python eval/generate_eval_samples.py \
+    --qdrant-url http://localhost:6333 \
+    --orchestrator http://localhost:8000 \
+    --num-samples 50 \
+    --abstain-ratio 0.20 \
+    --output eval/datasets/golden.jsonl
+```
+
+This:
+1. Samples diverse articles from Qdrant
+2. Generates questions for each article group
+3. Calls the orchestrator to synthesize ground truth answers
+4. Extracts relevant source IDs from the answers
+5. Saves to `eval/datasets/golden.jsonl` (JSONL format, one sample per line)
+
+**Parameters:**
+- `--num-samples`: Total evaluation questions to generate (default 25)
+- `--abstain-ratio`: Fraction of abstain test cases—questions with no relevant articles (default 0.15)
+- `--output`: Where to save the golden dataset (default `eval/datasets/golden.jsonl`)
+
+### Step 2: Run Evaluation
+
+Run the offline eval gate against the golden dataset:
+
+```bash
+python eval/run_eval.py \
+    --orchestrator http://localhost:8000 \
+    --evaluation http://localhost:8003 \
+    --dataset eval/datasets/golden.jsonl
+```
+
+Or via Makefile:
+
+```bash
+make eval
+```
+
+The eval runner:
+1. Loads each question from golden.jsonl
+2. Calls the orchestrator `/research` endpoint
+3. Scores the answer via the evaluation service (faithfulness, citation precision, context recall, etc.)
+4. Aggregates metrics across all samples
+5. **Fails the build** if any quality gate is not met:
+   - `faithfulness ≥ 0.80`
+   - `citation_precision ≥ 0.75`
+   - `context_recall ≥ 0.70`
+
+### Example Output
+
+```
+=== Aggregate eval scores ===
+  citation_precision       mean=0.823 n=50
+  context_recall           mean=0.756 n=50
+  faithfulness             mean=0.891 n=50
+
+GATE PASSED
+```
+
+---
+
+## Monitoring: Prometheus & Grafana
+
+Both dashboards are automatically provisioned in the local stack:
+
+- **Prometheus**: http://localhost:9090
+  - Query metrics from any service (e.g., `retrieval_search_time_seconds`)
+  - Explore targets and scrape status
+  
+- **Grafana**: http://localhost:3000 (default login: `admin`/`admin`)
+  - Pre-configured **News Research Agent** dashboard
+  - Real-time latency, request counts, token usage, error rates
+  - Custom metric: `inflight_requests` (used for agent HPA scaling)
+
+**Key metrics exported by each service:**
+- `orchestrator`: `research_latency_seconds`, `research_errors_total`, `inflight_requests`
+- `retrieval`: `retrieval_search_time_seconds`, `retrieval_results_count`, `retrieval_ingest_*`
+- `agent`: `agent_synthesis_time_seconds`, `agent_factcheck_time_seconds`
+- `evaluation`: `eval_scores` (per metric) and gate pass/fail counts
+
+---
+
+## Troubleshooting
+
+### `ModuleNotFoundError: No module named 'prometheus_client'`
+
+**Issue**: Retrieval service fails to start with this error.
+
+**Cause**: Missing dependency in `services/retrieval/requirements.txt`.
+
+**Fix**: Add `prometheus-client` to requirements and rebuild:
+
+```bash
+# Add to services/retrieval/requirements.txt:
+echo "prometheus-client==0.21.0" >> services/retrieval/requirements.txt
+
+# Rebuild the image
+docker compose build retrieval
+
+# Restart the service
+docker compose up -d retrieval
+
+# Verify it's running
+docker compose logs retrieval
+```
+
+### No articles in Qdrant after ingest
+
+**Issue**: Queries return no results or abstain responses.
+
+**Cause**: Either GDELT is rate-limited (HTTP 429) or the sample corpus is too small.
+
+**Fix**:
+1. Check retrieval logs: `docker compose logs retrieval`
+2. Look for "GDELT unavailable" or rate-limit messages
+3. Try ingesting with a different query or wait before retrying
+4. To disable sample fallback and see actual errors:
+   ```bash
+   docker compose exec retrieval env ALLOW_SAMPLE_FALLBACK=0 curl -X POST \
+     "http://localhost:8001/ingest?query=breaking%20news&max_records=75"
+   ```
+
+### Evaluation dataset too small
+
+**Issue**: Golden dataset has only 25 samples; evaluation is not representative.
+
+**Fix**: Ingest multiple topics first, then generate more samples:
+
+```bash
+# Ingest diverse topics
+for topic in "AI" "climate" "finance" "tech" "security"; do
+  curl -X POST "http://localhost:8001/ingest?query=$topic&max_records=150"
+done
+
+# Generate a larger golden dataset
+python eval/generate_eval_samples.py --num-samples 100 --abstain-ratio 0.15
+
+# Run evaluation
+make eval
+```
+
+### Containers OOM-killed or slow startup
+
+**Issue**: Retrieval service crashes or takes >30s to start.
+
+**Cause**: Embedding model needs ~2GB RAM; torch/transformers are large.
+
+**Fix**: Check Docker resource limits in `docker-compose.yml`:
+
+```yaml
+retrieval:
+  mem_limit: 2g      # Increase if host has room
+  mem_reservation: 1g
+```
 
 ---
 
@@ -346,6 +538,10 @@ images → **eval gate** → Helm deploy with Flagger canary.
 Key env vars (see `deploy/helm/values.yaml` and `docker-compose.yml`):
 
 - `ANTHROPIC_MODEL` (default `claude-sonnet-4-6`)
+- `ANTHROPIC_API_KEY` — your Anthropic secret
 - `MAX_CONTEXT_CHARS` — context budget for the orchestrator
-- `GATE_FAITHFULNESS` / `GATE_CITATION_PRECISION` / `GATE_CONTEXT_RECALL`
+- `GATE_FAITHFULNESS` / `GATE_CITATION_PRECISION` / `GATE_CONTEXT_RECALL` — eval thresholds
 - `RECENCY_DAYS` per request — restrict retrieval to recent articles
+- `QDRANT_URL` (default `http://qdrant:6333`)
+- `QDRANT_COLLECTION` (default `news`)
+- `ALLOW_SAMPLE_FALLBACK` (default `1`) — fall back to bundled corpus if GDELT unavailable
