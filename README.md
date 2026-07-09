@@ -414,6 +414,21 @@ Or via Makefile:
 make eval
 ```
 
+**Verify metrics collection after evaluation:**
+
+After running the evaluation, verify that metrics were collected by Prometheus:
+
+```bash
+# Query research requests processed by orchestrator
+curl -s "http://localhost:9090/api/v1/query?query=research_requests_total" | jq '.data.result[] | {job, value: .value[1]}'
+
+# Check all services are scraped
+curl -s "http://localhost:9090/api/v1/targets" | jq '.data.activeTargets[] | {job: .labels.job, state: .health}'
+
+# Browse metrics in Prometheus UI
+open http://localhost:9090
+```
+
 The eval runner:
 1. Loads each question from golden.jsonl
 2. Calls the orchestrator `/research` endpoint
@@ -444,6 +459,7 @@ Both dashboards are automatically provisioned in the local stack:
 - **Prometheus**: http://localhost:9090
   - Query metrics from any service (e.g., `retrieval_search_time_seconds`)
   - Explore targets and scrape status
+  - Scrapes all 4 application services every 15s
   
 - **Grafana**: http://localhost:3000 (default login: `admin`/`admin`)
   - Pre-configured **News Research Agent** dashboard
@@ -451,10 +467,23 @@ Both dashboards are automatically provisioned in the local stack:
   - Custom metric: `inflight_requests` (used for agent HPA scaling)
 
 **Key metrics exported by each service:**
-- `orchestrator`: `research_latency_seconds`, `research_errors_total`, `inflight_requests`
+
+All services require `prometheus-client==0.21.0` in their requirements.txt to export metrics.
+
+- `orchestrator`: `research_requests_total`, `research_requests_created`
 - `retrieval`: `retrieval_search_time_seconds`, `retrieval_results_count`, `retrieval_ingest_*`
-- `agent`: `agent_synthesis_time_seconds`, `agent_factcheck_time_seconds`
+- `agent`: `agent_synthesis_time_seconds`, `agent_factcheck_time_seconds`, `agent_claims_extracted_total`, `agent_extract_claims_time_seconds`, `agent_loop_steps`
 - `evaluation`: `eval_scores` (per metric) and gate pass/fail counts
+
+**After running evaluation**, verify metrics with:
+
+```bash
+# See research requests processed
+curl -s "http://localhost:9090/api/v1/query?query=research_requests_total{job='orchestrator'}" | jq '.data.result[0].value[1]'
+
+# Confirm all services are scraped (should show up/1 for all)
+docker compose exec prometheus curl -s http://prometheus:9090/api/v1/query?query=up
+```
 
 ---
 
@@ -462,24 +491,33 @@ Both dashboards are automatically provisioned in the local stack:
 
 ### `ModuleNotFoundError: No module named 'prometheus_client'`
 
-**Issue**: Retrieval service fails to start with this error.
+**Issue**: Agent, evaluation, or retrieval service fails to start with this error.
 
-**Cause**: Missing dependency in `services/retrieval/requirements.txt`.
+**Cause**: Missing `prometheus-client` dependency in one or more service requirements.txt files. This library is required for Prometheus metrics instrumentation across all services.
 
-**Fix**: Add `prometheus-client` to requirements and rebuild:
+**Fix**: Add `prometheus-client==0.21.0` to the missing service(s) and rebuild:
 
 ```bash
-# Add to services/retrieval/requirements.txt:
-echo "prometheus-client==0.21.0" >> services/retrieval/requirements.txt
+# Check which services need the dependency
+docker compose logs agent 2>&1 | grep prometheus_client
+docker compose logs evaluation 2>&1 | grep prometheus_client
+docker compose logs retrieval 2>&1 | grep prometheus_client
 
-# Rebuild the image
-docker compose build retrieval
+# Add to any missing services (e.g., agent and/or evaluation):
+echo "prometheus-client==0.21.0" >> services/agent/requirements.txt
+echo "prometheus-client==0.21.0" >> services/evaluation/requirements.txt
 
-# Restart the service
-docker compose up -d retrieval
+# Rebuild affected services
+docker compose build agent evaluation retrieval
 
-# Verify it's running
-docker compose logs retrieval
+# Restart services
+docker compose up -d
+
+# Verify all services are running
+docker compose ps
+docker compose logs agent | tail -5
+docker compose logs evaluation | tail -5
+docker compose logs retrieval | tail -5
 ```
 
 ### No articles in Qdrant after ingest

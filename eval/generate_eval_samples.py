@@ -1,19 +1,18 @@
 """
 Generate evaluation samples from Qdrant corpus with auto-labeled ground truth.
 
-Usage:
+Usage (no API calls needed):
     python eval/generate_eval_samples.py \
         --qdrant-url http://localhost:6333 \
-        --orchestrator http://localhost:8000 \
-        --num-samples 25 \
+        --num-samples 100 \
         --output eval/datasets/golden.jsonl
 
 Auto-labels each sample by:
   1. Sampling diverse articles from Qdrant
   2. Grouping by semantic topic
   3. Generating questions about article content
-  4. Using orchestrator to synthesize ground truth
-  5. Extracting relevant source IDs from the answer
+  4. Using article content as ground truth (no API calls)
+  5. Extracting relevant source IDs from articles
 """
 from __future__ import annotations
 
@@ -85,7 +84,7 @@ ABSTAIN_TOPICS = [
 def sample_from_qdrant(
     client: QdrantClient, collection: str, num_samples: int = 100
 ) -> list[dict]:
-    """Sample diverse points from Qdrant collection."""
+    """Sample diverse points from Qdrant collection using scroll."""
     try:
         # Get collection info
         collection_info = client.get_collection(collection)
@@ -94,29 +93,38 @@ def sample_from_qdrant(
         if count == 0:
             return []
 
-        # Sample random IDs
-        step = max(1, count // num_samples)
-        sample_ids = list(range(0, count, step))[:num_samples]
+        # Scroll through collection and sample randomly
+        all_points = []
+        next_page = None
+        while True:
+            points, next_page = client.scroll(
+                collection, limit=100, offset=next_page
+            )
+            all_points.extend(points)
+            if next_page is None:
+                break
+
+        # Randomly sample from all points
+        sample_size = min(num_samples * 2, len(all_points))
+        sampled = random.sample(all_points, sample_size) if len(all_points) > 0 else []
 
         articles = []
-        for point_id in sample_ids:
+        for point in sampled:
             try:
-                point = client.retrieve(collection, ids=[point_id])
-                if point:
-                    payload = point[0].payload
-                    articles.append(
-                        {
-                            "source_id": payload.get("source_id", f"src_{point_id}"),
-                            "title": payload.get("title", ""),
-                            "chunk_text": payload.get("chunk_text", ""),
-                            "url": payload.get("url", ""),
-                            "source_name": payload.get("source_name", ""),
-                            "published_at": payload.get(
-                                "published_at",
-                                datetime.utcnow().isoformat(),
-                            ),
-                        }
-                    )
+                payload = point.payload
+                articles.append(
+                    {
+                        "source_id": payload.get("source_id", f"src_{point.id}"),
+                        "title": payload.get("title", ""),
+                        "chunk_text": payload.get("chunk_text", ""),
+                        "url": payload.get("url", ""),
+                        "source_name": payload.get("source_name", ""),
+                        "published_at": payload.get(
+                            "published_at",
+                            datetime.utcnow().isoformat(),
+                        ),
+                    }
+                )
             except Exception:
                 continue
 
@@ -131,63 +139,41 @@ def generate_eval_sample(
     articles: list[dict],
     sample_id: str,
     topic: str,
-    orchestrator_url: str,
+    orchestrator_url: Optional[str] = None,
     is_abstain: bool = False,
 ) -> Optional[dict]:
-    """Generate a single eval sample by querying orchestrator."""
+    """Generate a single eval sample from Qdrant articles (no API calls needed)."""
     if not articles:
         return None
 
     # Generate question
     if is_abstain:
         question = f"What is the current status of {random.choice(ABSTAIN_TOPICS)}?"
+        ground_truth = None  # Abstain samples have no ground truth
+        relevant_source_ids = []
     else:
+        # Use article content as ground truth
         template = random.choice(QUESTION_TEMPLATES.get("general", []))
         question = template.format(topic=topic)
 
-    try:
-        # Call orchestrator to get answer
-        with httpx.Client(timeout=180) as hc:
-            resp = hc.post(
-                f"{orchestrator_url}/research",
-                json={"question": question, "recency_days": 365},
-                headers={"User-Agent": "eval-generator/1.0"},
-            )
-            resp.raise_for_status()
-            result = resp.json()
+        # Combine article texts as ground truth (simulating orchestrator synthesis)
+        article_texts = [
+            a.get("chunk_text", "") or a.get("title", "")
+            for a in articles if a.get("chunk_text") or a.get("title")
+        ]
+        ground_truth = " ".join(article_texts[:3]).strip()  # Use first 3 articles
 
-        answer = result.get("answer", {})
-        sources_used = answer.get("sources_used", [])
+        # Extract source IDs from articles
+        relevant_source_ids = list(
+            set(a.get("source_id") for a in articles if a.get("source_id"))
+        )[:5]  # Limit to 5 sources
 
-        # Extract source IDs from the answer
-        relevant_source_ids = []
-        if sources_used:
-            relevant_source_ids = list(
-                set(src.get("source_id") for src in sources_used if src.get("source_id"))
-            )
-
-        # For abstain cases, check if the answer actually abstained
-        if is_abstain:
-            ground_truth = "abstain" if answer.get("abstained") else None
-            relevant_source_ids = [] if answer.get("abstained") else relevant_source_ids
-        else:
-            # Extract ground truth from answer sentences
-            sentences = answer.get("sentences", [])
-            if sentences:
-                ground_truth = " ".join(s.get("text", "") for s in sentences).strip()
-            else:
-                ground_truth = None
-
-        return {
-            "id": sample_id,
-            "question": question,
-            "ground_truth": ground_truth,
-            "relevant_source_ids": relevant_source_ids,
-        }
-
-    except Exception as e:
-        print(f"Error generating sample {sample_id}: {e}")
-        return None
+    return {
+        "id": sample_id,
+        "question": question,
+        "ground_truth": ground_truth,
+        "relevant_source_ids": relevant_source_ids,
+    }
 
 
 def main():
@@ -204,14 +190,14 @@ def main():
     )
     parser.add_argument(
         "--orchestrator",
-        default="http://localhost:8000",
-        help="Orchestrator URL",
+        default=None,
+        help="Orchestrator URL (optional, not needed for sample generation)",
     )
     parser.add_argument(
         "--num-samples",
         type=int,
-        default=25,
-        help="Number of samples to generate",
+        default=100,
+        help="Number of samples to generate (default 100)",
     )
     parser.add_argument(
         "--output",
